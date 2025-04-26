@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 // Define the GPIO pins for the IR sensors
 const int greenSensorPin = 25; // Sensor 1 (Green)
@@ -11,10 +13,12 @@ int redSensorState = HIGH;
 int lastRedSensorState = HIGH; // Stores previous state of red sensor
 
   // Timeout for sensor activation (in milliseconds)
-const unsigned long sensorTimeout = 3;
+const unsigned long sensorTimeout = 2000;
 unsigned long greenDetectedTime = 0;
 unsigned long redDetectedTime = 0;
 
+// Set up LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
 // Define the GPIO pins for leds
 const int greenLedPin = 18;
@@ -26,6 +30,12 @@ bool redLedOn = false;
 unsigned long greenLedStartTime = 0;
 unsigned long redLedStartTime = 0;
 
+const int potentiometerPin = 32;
+
+// Buzzer stuff
+const int buzzerPin = 33;
+unsigned long buzzerOnTime = 0;
+const unsigned long buzzerDuration = 1000; // 1 second
 
 // People stats
 int peopleInside = 0;
@@ -39,13 +49,40 @@ void setup() {
   pinMode(greenLedPin, OUTPUT);
   pinMode(redLedPin, OUTPUT);
 
+  pinMode(potentiometerPin, INPUT);
+
+  pinMode(buzzerPin, OUTPUT);
+  digitalWrite(buzzerPin, LOW); // Make sure it's off at start
+
   Serial.println("People Counter Started");
   Serial.print("Initial People Inside: ");
   Serial.println(peopleInside);
+
+  lcd.init();                     
+  lcd.backlight();
+  lcd.setCursor(0,0);
+  lcd.print("Starting...");
+  delay(1000);
+  lcd.clear();
+}
+
+void updateDisplay(int people, int maxCapacity) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("People:");
+  lcd.setCursor(0, 1);
+  lcd.print(people);
+  lcd.print("/");
+  lcd.print(maxCapacity);
 }
 
 void loop() {
-  // Read the debounced states of the sensors
+  // Read the potentiometer value
+  int potValue = analogRead(potentiometerPin);
+    // Map the potentiometer value (0-4095) to a range (e.g., 1 to 50 people)
+  int capacity = map(potValue, 0, 4095, 1, 50);
+
+  // Read the states of the sensors
   int newGreenSensorState = digitalRead(greenSensorPin);
   int newRedSensorState = digitalRead(redSensorPin);
   unsigned long currentTime = millis();
@@ -80,14 +117,21 @@ void loop() {
 
   // Check for entry (Green then Red)
   if (greenDetectedFirst && !newRedSensorState) {
+    if (peopleInside < capacity) {
       peopleInside++;
       Serial.println("Someone went inside!");
-      Serial.print("People Inside: ");
-      Serial.println(peopleInside);
-      greenDetectedFirst = false;
-      redDetectedFirst = false;
+    } else {
+      Serial.println("Capacity full! Cannot enter.");
+      // Trigger buzzer
+      digitalWrite(buzzerPin, HIGH);
+      buzzerOnTime = currentTime;
+    }
+    Serial.print("People Inside: ");
+    Serial.println(peopleInside);
+    greenDetectedFirst = false;
+    redDetectedFirst = false;
 
-      // Turn on green LED non-blocking
+    // Turn on green LED non-blocking
     digitalWrite(greenLedPin, HIGH);
     greenLedOn = true;
     greenLedStartTime = currentTime;
@@ -135,5 +179,12 @@ void loop() {
     redLedOn = false;
   }
 
+  // Turn off buzzer after 1 second
+  if (buzzerOnTime != 0 && (currentTime - buzzerOnTime >= buzzerDuration)) {
+    digitalWrite(buzzerPin, LOW);
+    buzzerOnTime = 0;
+  }
+
+  updateDisplay(peopleInside, capacity);
   delay(10);
 }
